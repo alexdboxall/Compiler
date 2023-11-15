@@ -8,5 +8,13 @@
 import Foundation
 
 enum LexerException: Error {
-    case invalidLiteralError(String)
+    case invalidLeadingZeroOnIntegerLiteral(String)
+    case invalidIntegerLiteral(String)
+    case invalidCharacterLiteral(String)
+    case invalidEscapeCharacter(String)
+    case integerLiteralExceedsBounds(String)
+    case invalidOperatorException(String)
+    case integerPrefixWithoutLiteral(String)
+    case uppercaseIntegerPrefix(String)
+    case invalidIntegerPrefix(String)
 }

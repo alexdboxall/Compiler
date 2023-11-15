@@ -19,17 +19,76 @@ struct IdentifierToken: Token {
     }
 }
 
+private func resolveEscapeCodes(inString str: String) throws -> String {
+    var result = ""
+    var escaped = false
+    for char in str {
+        if escaped {
+            escaped = false
+            switch char {
+            case "n":
+                result += "\n"
+            case "t": 
+                result += "\t"
+            case "r":
+                result += "\r"
+            case "\"":
+                result += "\""
+            case "'":
+                result += "'"
+            case "\\":
+                result += "\\"
+            default:
+                throw LexerException.invalidEscapeCharacter("Invalid escape sequence \\\(char)")
+            }
+        } else if char == "\\" {
+            escaped = true
+        } else {
+            result += String(char)
+        }
+    }
+    return result
+}
+
+struct StringLiteralToken: Token {
+    /*
+     * Does not include quotes, and escape characters have already been taken care of.
+     */
+    let string: String
+    
+    init(potentiallyBackslashedString lexeme: String) throws {
+        self.string = try resolveEscapeCodes(inString: lexeme)
+    }
+}
+
+struct CharacterLiteralToken: Token {
+    /*
+     * Does not include quotes, and escape characters have already been taken care of.
+     */
+    let char: Character
+    
+    init(potentiallyBackslashedCharacter lexeme: String) throws {
+        char = Character(try resolveEscapeCodes(inString: String(lexeme)))
+    }
+}
+
 struct IntegerLiteralToken: Token {
+    /*
+     * Includes the prefixes/suffixes, but not any underscores
+     */
     let lexeme: String
     let underlyingValue: UInt64
     
     static private func getBaseOf(lexeme: String) -> Int {
-        if (lexeme.hasPrefix("0x")) {
+        if lexeme.hasPrefix("0x") {
             return 16;
-        } else if (lexeme.hasPrefix("0b")) {
+            
+        } else if lexeme.hasPrefix("0b") {
             return 2;
-        } else if (lexeme.hasPrefix("0o")) {
+            
+        } else if lexeme.hasPrefix("0o") {
             return 8;
+            
         } else {
             return 10;
         }
@@ -37,7 +96,11 @@ struct IntegerLiteralToken: Token {
     
     static private func convertToInt(literal: String, withBase base: Int) throws -> UInt64 {
         if (base == 10 && literal.hasPrefix("0") && literal.count > 1) {
-            throw LexerException.invalidLiteralError("Decimal literals cannot start with a leading zero. Use the '0o' prefix for octal literals.")
+            throw LexerException.invalidLeadingZeroOnIntegerLiteral("Decimal literals cannot start with a leading zero. Use the '0o' prefix for octal literals.")
+        }
+        
+        if (literal.count == 0) {
+            throw LexerException.integerPrefixWithoutLiteral("Expected integer literal after the prefix.")
         }
         
         /*
@@ -47,12 +110,23 @@ struct IntegerLiteralToken: Token {
         
         var value: UInt64 = 0;
         for char in literal.uppercased() {
-            value *= UInt64(base)
+            if char == "_" {
+                continue
+            }
+            let (result, overflow) = value.multipliedReportingOverflow(by: UInt64(base))
+            if overflow {
+                throw LexerException.integerLiteralExceedsBounds("Integer literal \(literal) exceeds range of type.")
+            }
+            value = result
             if let lookupIndex = lookup.firstIndex(of: char) {
-                value += UInt64(lookupIndex.advanced(by: 0))
-                
+                let (result, overflow) = value.addingReportingOverflow(UInt64(lookupIndex.advanced(by: 0)))
+                if overflow {
+                    throw LexerException.integerLiteralExceedsBounds("Integer literal \(literal) exceeds range of type.")
+                }
+                value = result
+            
             } else {
-                throw LexerException.invalidLiteralError("Invalid character \(char) found in integer literal.")
+                throw LexerException.invalidIntegerLiteral("Invalid character \(char) found in integer literal.")
             }
         }
         
@@ -60,8 +134,8 @@ struct IntegerLiteralToken: Token {
     }
     
     static private func calculateUnderlyingValue(ofLexeme lexeme: String) throws -> UInt64 {
-        var base = getBaseOf(lexeme: lexeme)
-        if (base == 10) {
+        let base = getBaseOf(lexeme: lexeme)
+        if base == 10 {
             return try convertToInt(literal: lexeme, withBase: 10)
         } else {
             return try convertToInt(literal: String(lexeme.dropFirst(2)), withBase: base)
@@ -157,83 +231,83 @@ struct OperatorToken: Token {
     let type: OperatorTokenType
     let lexeme: String
     
-    static let tokenLookup = [
-        "+"             : OperatorTokenType.Plus,
-        "-"             : OperatorTokenType.Minus,
-        "*"             : OperatorTokenType.Multiply,
-        "/"             : OperatorTokenType.Divide,
-        "%"             : OperatorTokenType.Modulo,
-        "&"             : OperatorTokenType.BitwiseAnd,
-        "|"             : OperatorTokenType.BitwiseOr,
-        "^"             : OperatorTokenType.BitwiseXor,
-        "<<"            : OperatorTokenType.ShiftLeft,
-        ">>"            : OperatorTokenType.ShiftRight,
-        "+="            : OperatorTokenType.PlusEquals,
-        "-="            : OperatorTokenType.MinusEquals,
-        "*="            : OperatorTokenType.MultiplyEquals,
-        "/="            : OperatorTokenType.DivideEquals,
-        "%="            : OperatorTokenType.ModuloEquals,
-        "&="            : OperatorTokenType.BitwiseAndEquals,
-        "|="            : OperatorTokenType.BitwiseOrEquals,
-        "^="            : OperatorTokenType.BitwiseXorEquals,
-        "<<="           : OperatorTokenType.ShiftLeftEquals,
-        ">>="           : OperatorTokenType.ShiftRightEquals,
-        "&+"            : OperatorTokenType.OverflowPlus,
-        "&-"            : OperatorTokenType.OverflowMinus,
-        "&*"            : OperatorTokenType.OverflowMultiply,
-        "&+="           : OperatorTokenType.OverflowPlusEquals,
-        "&-="           : OperatorTokenType.OverflowMinusEquals,
-        "&*="           : OperatorTokenType.OverflowMultiplyEquals,
-        "!"             : OperatorTokenType.ExclamationMark,
-        "?"             : OperatorTokenType.QuestionMark,
-        "??"            : OperatorTokenType.DoubleQuestionMark,
-        ";"             : OperatorTokenType.Semicolon,
-        "&&"            : OperatorTokenType.LogicalAnd,
-        "||"            : OperatorTokenType.LogicalOr,
-        "~"             : OperatorTokenType.Tilde,
-        "."             : OperatorTokenType.Dot,
-        "..."           : OperatorTokenType.Ellipsis,
-        "..="           : OperatorTokenType.InclusiveRange,
-        "..<"           : OperatorTokenType.ExclusiveRange,
-        "++"            : OperatorTokenType.Increment,
-        "--"            : OperatorTokenType.Decrement,
-        "="             : OperatorTokenType.Equals,
-        "=="            : OperatorTokenType.DoubleEquals,
-        "!="            : OperatorTokenType.NotEquals,
-        ":"             : OperatorTokenType.Colon,
-        ","             : OperatorTokenType.Comma,
-        "<"             : OperatorTokenType.Less,
-        ">"             : OperatorTokenType.Greater,
-        "<="            : OperatorTokenType.LessOrEqual,
-        ">="            : OperatorTokenType.GreaterOrEqual,
-        "("             : OperatorTokenType.LeftBracket,
-        ")"             : OperatorTokenType.RightBracket,
-        "["             : OperatorTokenType.LeftSquareBracket,
-        "]"             : OperatorTokenType.RightSquareBracket,
-        "{"             : OperatorTokenType.LeftCurlyBracket,
-        "}"             : OperatorTokenType.RightCurlyBracket,
-        "<-"            : OperatorTokenType.LeftArrow,
-        "->"            : OperatorTokenType.RightArrow,
+    static let tokenLookup: Dictionary<String, OperatorTokenType> = [
+        "+"             : .Plus,
+        "-"             : .Minus,
+        "*"             : .Multiply,
+        "/"             : .Divide,
+        "%"             : .Modulo,
+        "&"             : .BitwiseAnd,
+        "|"             : .BitwiseOr,
+        "^"             : .BitwiseXor,
+        "<<"            : .ShiftLeft,
+        ">>"            : .ShiftRight,
+        "+="            : .PlusEquals,
+        "-="            : .MinusEquals,
+        "*="            : .MultiplyEquals,
+        "/="            : .DivideEquals,
+        "%="            : .ModuloEquals,
+        "&="            : .BitwiseAndEquals,
+        "|="            : .BitwiseOrEquals,
+        "^="            : .BitwiseXorEquals,
+        "<<="           : .ShiftLeftEquals,
+        ">>="           : .ShiftRightEquals,
+        "&+"            : .OverflowPlus,
+        "&-"            : .OverflowMinus,
+        "&*"            : .OverflowMultiply,
+        "&+="           : .OverflowPlusEquals,
+        "&-="           : .OverflowMinusEquals,
+        "&*="           : .OverflowMultiplyEquals,
+        "!"             : .ExclamationMark,
+        "?"             : .QuestionMark,
+        "??"            : .DoubleQuestionMark,
+        ";"             : .Semicolon,
+        "&&"            : .LogicalAnd,
+        "||"            : .LogicalOr,
+        "~"             : .Tilde,
+        "."             : .Dot,
+        "..."           : .Ellipsis,
+        "..="           : .InclusiveRange,
+        "..<"           : .ExclusiveRange,
+        "++"            : .Increment,
+        "--"            : .Decrement,
+        "="             : .Equals,
+        "=="            : .DoubleEquals,
+        "!="            : .NotEquals,
+        ":"             : .Colon,
+        ","             : .Comma,
+        "<"             : .Less,
+        ">"             : .Greater,
+        "<="            : .LessOrEqual,
+        ">="            : .GreaterOrEqual,
+        "("             : .LeftBracket,
+        ")"             : .RightBracket,
+        "["             : .LeftSquareBracket,
+        "]"             : .RightSquareBracket,
+        "{"             : .LeftCurlyBracket,
+        "}"             : .RightCurlyBracket,
+        "<-"            : .LeftArrow,
+        "->"            : .RightArrow,
         
-        "var"           : OperatorTokenType.Var,
-        "let"           : OperatorTokenType.Let,
-        "if"            : OperatorTokenType.If,
-        "func"          : OperatorTokenType.Func,
-        "switch"        : OperatorTokenType.Switch,
-        "case"          : OperatorTokenType.Case,
-        "Int"           : OperatorTokenType.Int,
-        "String"        : OperatorTokenType.String,
-        "Char"          : OperatorTokenType.Char,
-        "Bool"          : OperatorTokenType.Bool,
-        "true"          : OperatorTokenType.True,
-        "false"         : OperatorTokenType.False,
-        "nil"           : OperatorTokenType.Nil,
-        "default"       : OperatorTokenType.Default,
-        "fallthrough"   : OperatorTokenType.Fallthrough,
-        "Void"          : OperatorTokenType.Void,
-        "struct"        : OperatorTokenType.Struct,
-        "class"         : OperatorTokenType.Class,
-        "else"          : OperatorTokenType.Else
+        "var"           : .Var,
+        "let"           : .Let,
+        "if"            : .If,
+        "func"          : .Func,
+        "switch"        : .Switch,
+        "case"          : .Case,
+        "Int"           : .Int,
+        "String"        : .String,
+        "Char"          : .Char,
+        "Bool"          : .Bool,
+        "true"          : .True,
+        "false"         : .False,
+        "nil"           : .Nil,
+        "default"       : .Default,
+        "fallthrough"   : .Fallthrough,
+        "Void"          : .Void,
+        "struct"        : .Struct,
+        "class"         : .Class,
+        "else"          : .Else
         
     ]
     
@@ -252,7 +326,7 @@ struct OperatorToken: Token {
         self.lexeme = OperatorToken.reverseTokenLookup[type]!
     }
     
-    init(str: String) throws {
+    init(str: String) {
         self.init(type: OperatorToken.tokenLookup[str]!)
     }
     
@@ -263,6 +337,10 @@ struct OperatorToken: Token {
     static func isStringATerminalToken(str: String) -> Bool {
         return tokenLookup.filter({$0.key.hasPrefix(str)}).count == 1
     }
+    
+    static func isStringAValidToken(str: String) -> Bool {
+        return tokenLookup.keys.contains(str)
+    }
 }
 
 func test(token: Token) -> Void {
@@ -272,9 +350,9 @@ func test(token: Token) -> Void {
         
     case let tkn as OperatorToken:
         switch tkn.type {
-        case OperatorTokenType.Plus:
+        case .Plus:
             print("add")
-        case OperatorTokenType.Minus:
+        case .Minus:
             print("sub")
         default:
             print("other")
