@@ -22,6 +22,7 @@ struct IdentifierToken: Token {
 private func resolveEscapeCodes(inString str: String) throws -> String {
     var result = ""
     var escaped = false
+    var i = 0
     for char in str {
         if escaped {
             escaped = false
@@ -39,13 +40,18 @@ private func resolveEscapeCodes(inString str: String) throws -> String {
             case "\\":
                 result += "\\"
             default:
-                throw LexerException.invalidEscapeCharacter("Invalid escape sequence \\\(char)")
+                throw LexerException.invalidEscapeCharacter(reason: "Invalid escape sequence \\\(char)", columnOffset: i)
             }
         } else if char == "\\" {
             escaped = true
         } else {
             result += String(char)
         }
+        
+        i += 1
+    }
+    if escaped {
+        throw LexerException.invalidEscapeCharacter(reason: "Escape sequence isn't closed.", columnOffset: i)
     }
     return result
 }
@@ -96,11 +102,11 @@ struct IntegerLiteralToken: Token {
     
     static private func convertToInt(literal: String, withBase base: Int) throws -> UInt64 {
         if (base == 10 && literal.hasPrefix("0") && literal.count > 1) {
-            throw LexerException.invalidLeadingZeroOnIntegerLiteral("Decimal literals cannot start with a leading zero. Use the '0o' prefix for octal literals.")
+            throw LexerException.invalidLeadingZeroOnIntegerLiteral(reason: "Decimal literals cannot start with a leading zero. Use the '0o' prefix for octal literals.")
         }
         
         if (literal.count == 0) {
-            throw LexerException.integerPrefixWithoutLiteral("Expected integer literal after the prefix.")
+            throw LexerException.integerPrefixWithoutLiteral(reason: "Expected integer literal after the prefix.", columnOffset: 2)
         }
         
         /*
@@ -109,24 +115,29 @@ struct IntegerLiteralToken: Token {
         let lookup: [Character] = Array(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "A", "B", "C", "D", "E", "F"][0..<base])
         
         var value: UInt64 = 0;
+        var columnOffset = base == 10 ? 0 : 2
         for char in literal.uppercased() {
+            defer {
+                columnOffset += 1
+            }
+            
             if char == "_" {
                 continue
             }
             let (result, overflow) = value.multipliedReportingOverflow(by: UInt64(base))
             if overflow {
-                throw LexerException.integerLiteralExceedsBounds("Integer literal \(literal) exceeds range of type.")
+                throw LexerException.integerLiteralExceedsBounds(reason: "Integer literal \(literal) exceeds range of type.")
             }
             value = result
             if let lookupIndex = lookup.firstIndex(of: char) {
                 let (result, overflow) = value.addingReportingOverflow(UInt64(lookupIndex.advanced(by: 0)))
                 if overflow {
-                    throw LexerException.integerLiteralExceedsBounds("Integer literal \(literal) exceeds range of type.")
+                    throw LexerException.integerLiteralExceedsBounds(reason: "Integer literal \(literal) exceeds range of type.")
                 }
                 value = result
             
             } else {
-                throw LexerException.invalidIntegerLiteral("Invalid character \(char) found in integer literal.")
+                throw LexerException.invalidIntegerLiteral(reason: "Invalid character found in integer literal.", columnOffset: columnOffset)
             }
         }
         
@@ -333,22 +344,3 @@ struct OperatorToken: Token {
     }
 }
 
-func test(token: Token) -> Void {
-    switch token {
-    case let tkn as IdentifierToken:
-        print("The identifier is \(tkn.lexeme)")
-        
-    case let tkn as OperatorToken:
-        switch tkn.type {
-        case .Plus:
-            print("add")
-        case .Minus:
-            print("sub")
-        default:
-            print("other")
-        }
-        
-    default:
-        print("unknown token!")
-    }
-}

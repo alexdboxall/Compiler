@@ -13,7 +13,19 @@ enum LexerState {
     case None, IntegerLiteral, StringLiteral, CharacterLiteral, Operator, Identifier
 }
 
-private func lexCharacterInNone(_ char: Character, withLexeme lexeme: String) -> LexerCharacterResult {
+struct LexerPosition {
+    let lineNumber: Int
+    let column: Int
+    let filename: String
+    
+    init(lineNumber: Int, column: Int, filename: String) {
+        self.lineNumber = lineNumber
+        self.column = column
+        self.filename = filename
+    }
+}
+
+private func lexCharacterInNone(_ char: Character, withLexeme lexeme: String, atPosition pos: LexerPosition) -> LexerCharacterResult {
     /*
      * All of these must (obviously) return nil as the 'new token' field. The rest of the lexer
      * relies on this - it will retry characters when it hits the end of the token, and inject
@@ -43,16 +55,16 @@ private func lexCharacterInNone(_ char: Character, withLexeme lexeme: String) ->
 /*
  * The 'lexeme' does include prefixes and suffixes (e.g. 0x21345 or 123u) and underscores.
  */
-private func lexCharacterInInteger(_ char: Character, withLexeme lexeme: String) throws -> LexerCharacterResult {
+private func lexCharacterInInteger(_ char: Character, withLexeme lexeme: String, atPosition pos: LexerPosition) throws -> LexerCharacterResult {
     if (lexeme == "0" && char.isLetter) {
         if (char == "X") {
-            throw LexerException.uppercaseIntegerPrefix("Hexadecimal literals must start with '0x', not '0X'")
+            throw LexerException.uppercaseIntegerPrefix(reason: "Hexadecimal literals must start with '0x', not '0X'")
         } else if (char == "O") {
-            throw LexerException.uppercaseIntegerPrefix("Octal literals must start with '0o', not '0O'")
+            throw LexerException.uppercaseIntegerPrefix(reason: "Octal literals must start with '0o', not '0O'")
         } else if (char == "B") {
-            throw LexerException.uppercaseIntegerPrefix("Binary literals must start with '0b', not '0B'")
+            throw LexerException.uppercaseIntegerPrefix(reason: "Binary literals must start with '0b', not '0B'")
         } else if (char != "x" && char != "o" && char != "b") {
-            throw LexerException.invalidIntegerPrefix("Invalid integer literal prefix '0\(char)'")
+            throw LexerException.invalidIntegerPrefix(reason: "Invalid integer literal prefix '0\(char)'")
         }
     }
     
@@ -74,7 +86,7 @@ private func lexCharacterInInteger(_ char: Character, withLexeme lexeme: String)
      * return value of the retry, which is okay, as it will always have a nil in that slot of the tuple.
      */
     let token = try IntegerLiteralToken(lexeme: lexeme)
-    let retriedResult = try lexCharacter(char, atState: LexerState.None, withLexeme: "")
+    let retriedResult = try lexCharacter(char, atState: LexerState.None, withLexeme: "", atPosition: pos)
     assert(retriedResult.token == nil)
     return (retriedResult.state, token, retriedResult.lexeme)
     
@@ -84,7 +96,7 @@ private func lexCharacterInInteger(_ char: Character, withLexeme lexeme: String)
  * The 'lexeme' does not include quotes, but will include backslashes. When converting to a token,
  * the backslashes and the following character get replaced with the actual escaped character.
  */
-private func lexCharacterInCharacter(_ char: Character, withLexeme lexeme: String) throws -> LexerCharacterResult {
+private func lexCharacterInCharacter(_ char: Character, withLexeme lexeme: String, atPosition pos: LexerPosition) throws -> LexerCharacterResult {
     if lexeme.count == 0 || (lexeme.count == 1 && lexeme == "\\") {
         /*
          * Continue the character literal if it is the first character, or comes after
@@ -92,7 +104,7 @@ private func lexCharacterInCharacter(_ char: Character, withLexeme lexeme: Strin
          */
         return (LexerState.CharacterLiteral, nil, lexeme + String(char))
         
-    } else if char == "\'" && ((lexeme.count == 1) || (lexeme.count == 2 && lexeme.hasPrefix("\\"))) {
+    } else if char == "\'" && (lexeme.count == 1 || (lexeme.count == 2 && lexeme.hasPrefix("\\"))) {
         /*
          * Finish the character literal on its end quote, as long it appears in the right position.
          */
@@ -102,7 +114,7 @@ private func lexCharacterInCharacter(_ char: Character, withLexeme lexeme: Strin
         /*
          * If we got to here, the literal is invalid.
          */
-        throw LexerException.invalidCharacterLiteral("Character literal too long.")
+        throw LexerException.invalidCharacterLiteral(reason: "Character literal too long.", columnOffset: lexeme.count + 1)
     }
 }
 
@@ -122,7 +134,7 @@ private func isStringInEscapedMode(_ str: String) -> Bool {
  * The 'lexeme' does not include quotes, but will include backslashes. When converting to a token,
  * the backslashes and the following character get replaced with the actual escaped character.
  */
-private func lexCharacterInString(_ char: Character, withLexeme lexeme: String) throws -> LexerCharacterResult {
+private func lexCharacterInString(_ char: Character, withLexeme lexeme: String, atPosition pos: LexerPosition) throws -> LexerCharacterResult {
     if char == "\"" && !isStringInEscapedMode(lexeme) {
         return (LexerState.None, try StringLiteralToken(potentiallyBackslashedString: lexeme), lexeme + String(char))
     }
@@ -130,9 +142,9 @@ private func lexCharacterInString(_ char: Character, withLexeme lexeme: String) 
     return (LexerState.StringLiteral, nil, lexeme + String(char))
 }
 
-private func lexCharacterInOperator(_ char: Character, withLexeme lexeme: String) throws -> LexerCharacterResult {
+private func lexCharacterInOperator(_ char: Character, withLexeme lexeme: String, atPosition pos: LexerPosition) throws -> LexerCharacterResult {
     guard OperatorToken.isStringValidStartOfToken(str: lexeme) else {
-        throw LexerException.invalidOperatorException("Operator beginning with \(lexeme) is invalid.")
+        throw LexerException.invalidOperatorException(reason: "Operator is invalid.")
     }
     
     let newLexeme = lexeme + String(char)
@@ -143,7 +155,7 @@ private func lexCharacterInOperator(_ char: Character, withLexeme lexeme: String
     
     if !OperatorToken.isStringValidStartOfToken(str: newLexeme) {
         guard OperatorToken.isStringAValidToken(str: lexeme) else {
-            throw LexerException.invalidOperatorException("Operator beginning with \(lexeme) is invalid.")
+            throw LexerException.invalidOperatorException(reason: "Operator is invalid.")
         }
         return (LexerState.None, OperatorToken(str: lexeme), "")
     }
@@ -151,7 +163,7 @@ private func lexCharacterInOperator(_ char: Character, withLexeme lexeme: String
     return (LexerState.Operator, nil, newLexeme)
 }
 
-private func lexCharacterInIdentifier(_ char: Character, withLexeme lexeme: String) throws -> LexerCharacterResult {
+private func lexCharacterInIdentifier(_ char: Character, withLexeme lexeme: String, atPosition pos: LexerPosition) throws -> LexerCharacterResult {
     if char.isLetter || char.isNumber || char == "_" {
         return (LexerState.Identifier, nil, lexeme + String(char))
     }
@@ -166,38 +178,82 @@ private func lexCharacterInIdentifier(_ char: Character, withLexeme lexeme: Stri
         IdentifierToken(lexeme: lexeme)
     }
     
-    let retriedResult = try lexCharacter(char, atState: LexerState.None, withLexeme: "")
+    let retriedResult = try lexCharacter(char, atState: LexerState.None, withLexeme: "", atPosition: pos)
     assert(retriedResult.token == nil)
     return (retriedResult.state, token, retriedResult.lexeme)
 }
 
-private func lexCharacter(_ char: Character, atState state: LexerState, withLexeme lexeme: String) throws -> LexerCharacterResult {
+private func lexCharacter(_ char: Character, atState state: LexerState, withLexeme lexeme: String, atPosition pos: LexerPosition) throws -> LexerCharacterResult {
     return switch state {
-        case .None:             lexCharacterInNone(char, withLexeme: lexeme)
-        case .IntegerLiteral:   try lexCharacterInInteger(char, withLexeme: lexeme)
-        case .CharacterLiteral: try lexCharacterInCharacter(char, withLexeme: lexeme)
-        case .StringLiteral:    try lexCharacterInString(char, withLexeme: lexeme)
-        case .Operator:         try lexCharacterInOperator(char, withLexeme: lexeme)
-        case .Identifier:       try lexCharacterInIdentifier(char, withLexeme: lexeme)
+        case .None:             lexCharacterInNone(char, withLexeme: lexeme, atPosition: pos)
+        case .IntegerLiteral:   try lexCharacterInInteger(char, withLexeme: lexeme, atPosition: pos)
+        case .CharacterLiteral: try lexCharacterInCharacter(char, withLexeme: lexeme, atPosition: pos)
+        case .StringLiteral:    try lexCharacterInString(char, withLexeme: lexeme, atPosition: pos)
+        case .Operator:         try lexCharacterInOperator(char, withLexeme: lexeme, atPosition: pos)
+        case .Identifier:       try lexCharacterInIdentifier(char, withLexeme: lexeme, atPosition: pos)
     }
+}
+
+func displayLexerError(error: LexerException, lines: [String], tokenStartPos: LexerPosition) -> Void {
+    let column = tokenStartPos.column + error.getColumnOffset()
+    let line = lines[lines.index(lines.startIndex, offsetBy: tokenStartPos.lineNumber - 1)]
+    
+    print("<filename!>:\(tokenStartPos.lineNumber):\(column + 1): error: \(error.getReason())")
+    print("\(line)")
+    print("\(String(repeating: " ", count: column))^")
 }
 
 func lex(str: String) throws -> [Token] {
     var tokens: [Token] = []
     var state = LexerState.None
     var lexeme = ""
+    var currentPos = LexerPosition(lineNumber: 1, column: 1, filename: "<filename!>")
+    var tokenStartPos = currentPos
     
     /*
      * We add a whitespace character to the end so it can finsh off any token that it is
      * currently in when we hit the end of the file.
      */
-    for char in str + " " {
-        let result = try lexCharacter(char, atState: state, withLexeme: lexeme)
-        state = result.state
-        lexeme = result.lexeme
-        if let token = result.token {
-            tokens.append(token)
+    
+    let lines = (str.split(separator: "\n") + [" "]).map({String($0)})
+    for line in lines {
+        for char in line {
+            do {
+                let result = try lexCharacter(char, atState: state, withLexeme: lexeme, atPosition: tokenStartPos)
+                state = result.state
+                lexeme = result.lexeme
+                if let token = result.token {
+                    tokens.append(token)
+                    tokenStartPos = currentPos
+                }
+                if state == LexerState.None {
+                    tokenStartPos = currentPos
+                }
+                
+            } catch let error as LexerException {
+                displayLexerError(
+                    error: error,
+                    lines: lines,
+                    tokenStartPos: tokenStartPos
+                )
+                throw error
+            }
+            
+            currentPos = LexerPosition(lineNumber: currentPos.lineNumber, column: currentPos.column + 1, filename: currentPos.filename)
         }
+        
+        currentPos = LexerPosition(lineNumber: currentPos.lineNumber + 1, column: 1, filename: currentPos.filename)
+    }
+    
+    if state == LexerState.CharacterLiteral || state == LexerState.StringLiteral {
+        displayLexerError(
+            error: LexerException.unclosedStringOrCharacterLiteral(
+                reason: "Unclosed \(state == LexerState.CharacterLiteral ? "character" : "string") literal.",
+                columnOffset: lines[lines.index(lines.startIndex, offsetBy: tokenStartPos.lineNumber - 1)].count - 1
+            ),
+            lines: lines,
+            tokenStartPos: tokenStartPos
+        )
     }
     
     return tokens

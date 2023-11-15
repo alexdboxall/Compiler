@@ -15,6 +15,27 @@ print("Hello, World!")
  * for me.
  */
 
+do {
+    print(try lex(str: "hello world  0x12rf"))
+} catch {}
+
+do {
+    print(try lex(str: "'a' 'b' '\\n' 'ab'"))
+} catch {}
+
+do {
+    print(try lex(str: "'\\w'"))
+} catch {}
+
+do {
+    print(try lex(str: "'\\"))
+} catch {}
+
+do {
+    print(try lex(str: "\"this is a long string, but I forgot to terminate it!"))
+} catch {}
+
+
 let maybeContent = try? String(contentsOfFile: "/Users/alex/Desktop/Compiler/Tests/Files/test1.txt")
 if let content = maybeContent {
     print(content)
