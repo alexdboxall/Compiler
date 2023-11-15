@@ -27,7 +27,7 @@ struct LexerPosition {
 
 func lexCharacter(_ char: Character, atState state: LexerState, withLexeme lexeme: String, atPosition pos: LexerPosition) throws -> LexerCharacterResult {
     return switch state {
-        case .None:             lexCharacterInNone(char, withLexeme: lexeme, atPosition: pos)
+        case .None:                 lexCharacterInNone(char, withLexeme: lexeme, atPosition: pos)
         case .IntegerLiteral:   try lexCharacterInInteger(char, withLexeme: lexeme, atPosition: pos)
         case .CharacterLiteral: try lexCharacterInCharacter(char, withLexeme: lexeme, atPosition: pos)
         case .StringLiteral:    try lexCharacterInString(char, withLexeme: lexeme, atPosition: pos)
@@ -40,16 +40,16 @@ func displayLexerError(error: LexerException, lines: [String], tokenStartPos: Le
     let column = tokenStartPos.column + error.getColumnOffset()
     let line = lines[lines.index(lines.startIndex, offsetBy: tokenStartPos.lineNumber - 1)]
     
-    print("<filename!>:\(tokenStartPos.lineNumber):\(column + 1): error: \(error.getReason())")
+    print("\(tokenStartPos.filename):\(tokenStartPos.lineNumber):\(column + 1): error: \(error.getReason())")
     print("\(line)")
     print("\(String(repeating: " ", count: column))^")
 }
 
-func lex(str: String) throws -> [Token] {
+func lex(str: String, _ filename: String = "<unknown-file>") throws -> [Token] {
     var tokens: [Token] = []
     var state = LexerState.None
     var lexeme = ""
-    var currentPos = LexerPosition(lineNumber: 1, column: 1, filename: "<filename!>")
+    var currentPos = LexerPosition(lineNumber: 1, column: 1, filename: filename)
     var tokenStartPos = currentPos
     
     /*

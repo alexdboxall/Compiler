@@ -7,8 +7,6 @@
 
 import Foundation
 
-print("Hello, World!")
-
 /*
  * This is a multiline comment.
  * I have to put the asterisk in manually, but at least XCode does the indent
